@@ -245,10 +245,27 @@ async def scan(session):
     print(f"[{now}] 완료 — 롱 {len(curr_long_set)}개 / 숏 {len(curr_short_set)}개")
 
 # ── 루프 ──────────────────────────────────────────────────────────────────
+async def command_loop(session):
+    """명령어 전용 루프 — 2초마다 확인"""
+    while True:
+        try:
+            await handle_commands(session)
+        except Exception as e:
+            print(f"[명령어 루프 오류] {e}")
+        await asyncio.sleep(2)
+
+async def scan_loop(session):
+    """스캔 전용 루프 — N분마다 실행"""
+    while True:
+        try:
+            await scan(session)
+        except Exception as e:
+            print(f"[스캔 루프 오류] {e}")
+        await asyncio.sleep(REFRESH_MIN * 60)
+
 async def main():
     print("🚀 Long Hunter Bot 시작!")
     async with aiohttp.ClientSession() as session:
-        # 시작 알림
         await send_msg(session,
             "🚀 <b>Long Hunter Bot 시작!</b>\n"
             f"롱 사냥: L/S ≤ {LS_LOW}\n"
@@ -257,14 +274,11 @@ async def main():
             f"갱신: {REFRESH_MIN}분마다\n\n"
             "명령어 보려면 /help"
         )
-
-        while True:
-            try:
-                await handle_commands(session)
-                await scan(session)
-            except Exception as e:
-                print(f"[오류] {e}")
-            await asyncio.sleep(REFRESH_MIN * 60)
+        # 명령어 루프 + 스캔 루프 동시 실행
+        await asyncio.gather(
+            command_loop(session),
+            scan_loop(session)
+        )
 
 if __name__ == "__main__":
     asyncio.run(main())
