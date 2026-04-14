@@ -55,23 +55,23 @@ async def handle_commands(session):
             if chat_id != CHAT_ID:
                 continue
             
-            if text.startswith("/threshold"):
+            if text.startswith("/low"):
                 parts = text.split()
                 if len(parts) == 2:
                     try:
                         LS_LOW = float(parts[1])
                         await send_msg(session, f"✅ 롱 사냥 상한 → <b>{LS_LOW}</b> 로 변경됨")
                     except:
-                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /threshold 0.40")
+                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /low 0.40")
             
-            elif text.startswith("/short"):
+            elif text.startswith("/high"):
                 parts = text.split()
                 if len(parts) == 2:
                     try:
                         LS_HIGH = float(parts[1])
                         await send_msg(session, f"✅ 숏 사냥 하한 → <b>{LS_HIGH}</b> 로 변경됨")
                     except:
-                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /short 1.50")
+                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /high 1.50")
             
             elif text.startswith("/minchange"):
                 parts = text.split()
