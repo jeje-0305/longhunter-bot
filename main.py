@@ -96,8 +96,8 @@ async def handle_commands(session):
             elif text == "/help":
                 help_text = (
                     "📋 <b>사용 가능한 명령어</b>\n\n"
-                    "/threshold 0.40 — 롱 사냥 L/S 상한 변경\n"
-                    "/short 1.50 — 숏 사냥 L/S 하한 변경\n"
+                    "/low 0.40 — 롱 사냥 L/S 상한 변경\n"
+                    "/high 1.50 — 숏 사냥 L/S 하한 변경\n"
                     "/minchange 1.0 — 최소 변동률 변경\n"
                     "/status — 현재 설정 확인\n"
                     "/help — 도움말"
