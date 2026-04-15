@@ -9,15 +9,14 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID        = os.environ.get("CHAT_ID", "")
 REFRESH_MIN    = int(os.environ.get("REFRESH_MIN", "3"))
 
-LS_LOW         = float(os.environ.get("LS_LOW",  "0.50"))
-LS_HIGH        = float(os.environ.get("LS_HIGH", "1.50"))
-MIN_CHANGE     = float(os.environ.get("MIN_CHANGE", "1.0"))
-TOP_N          = int(os.environ.get("TOP_N", "80"))
+LS_LOW     = float(os.environ.get("LS_LOW",  "0.50"))
+LS_HIGH    = float(os.environ.get("LS_HIGH", "1.50"))
+MIN_CHANGE = float(os.environ.get("MIN_CHANGE", "1.0"))
+TOP_N      = int(os.environ.get("TOP_N", "80"))
 
 STATE_FILE = "state.json"
-KST = timezone(timedelta(hours=9))  # 한국 시간
+KST = timezone(timedelta(hours=9))
 
-# ── 시간 헬퍼 ─────────────────────────────────────────────────────────────
 def now_kst(fmt="%H:%M:%S"):
     return datetime.now(KST).strftime(fmt)
 
@@ -40,7 +39,8 @@ def save_state(long_set, short_set):
         print(f"[상태 저장 오류] {e}")
 
 prev_long, prev_short = load_state()
-next_scan_time = None  # 다음 스캔 예정 시각 추적용
+next_scan_time = None
+force_scan_flag = False
 
 # ── Telegram 전송 ──────────────────────────────────────────────────────────
 async def send_msg(session, text):
@@ -52,10 +52,9 @@ async def send_msg(session, text):
     except Exception as e:
         print(f"[텔레그램 오류] {e}")
 
-# ── 요약 메시지 생성 ───────────────────────────────────────────────────────
+# ── 요약 메시지 ────────────────────────────────────────────────────────────
 def build_summary(curr_long: dict, curr_short: dict) -> str:
-    now = now_kst()
-    lines = [f"📊 <b>스캔 결과</b> ({now} KST)\n"]
+    lines = [f"📊 <b>스캔 결과</b> ({now_kst()} KST)\n"]
 
     if curr_long:
         lines.append(f"📈 <b>롱 사냥 {len(curr_long)}개</b> (L/S ≤ {LS_LOW})")
@@ -63,7 +62,7 @@ def build_summary(curr_long: dict, curr_short: dict) -> str:
             sym = t["symbol"].replace("USDT", "")
             lines.append(f"  • {sym}  L/S <b>{t['ls']:.3f}</b>  {t['change']:+.2f}%")
     else:
-        lines.append(f"📈 <b>롱 사냥 0개</b>")
+        lines.append("📈 <b>롱 사냥 0개</b>")
 
     lines.append("")
 
@@ -73,116 +72,14 @@ def build_summary(curr_long: dict, curr_short: dict) -> str:
             sym = t["symbol"].replace("USDT", "")
             lines.append(f"  • {sym}  L/S <b>{t['ls']:.3f}</b>  {t['change']:+.2f}%")
     else:
-        lines.append(f"📉 <b>숏 사냥 0개</b>")
+        lines.append("📉 <b>숏 사냥 0개</b>")
 
     return "\n".join(lines)
-
-# ── 명령어 처리 ────────────────────────────────────────────────────────────
-force_scan_flag = False
-
-async def handle_commands(session):
-    global LS_LOW, LS_HIGH, MIN_CHANGE, force_scan_flag
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-
-    try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-            data = await r.json()
-
-        updates = data.get("result", [])
-        if not updates:
-            return
-
-        last_update_id = updates[-1]["update_id"]
-        ack_url = f"{url}?offset={last_update_id + 1}"
-        async with session.get(ack_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-            await r.json()
-
-        for update in updates:
-            msg     = update.get("message", {})
-            text    = msg.get("text", "").strip()
-            chat_id = str(msg.get("chat", {}).get("id", ""))
-
-            if chat_id != CHAT_ID:
-                continue
-
-            if text.startswith("/low"):
-                parts = text.split()
-                if len(parts) == 2:
-                    try:
-                        LS_LOW = float(parts[1])
-                        await send_msg(session, f"✅ 롱 사냥 상한 → <b>{LS_LOW}</b> 로 변경됨")
-                    except:
-                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /low 0.40")
-
-            elif text.startswith("/high"):
-                parts = text.split()
-                if len(parts) == 2:
-                    try:
-                        LS_HIGH = float(parts[1])
-                        await send_msg(session, f"✅ 숏 사냥 하한 → <b>{LS_HIGH}</b> 로 변경됨")
-                    except:
-                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /high 1.50")
-
-            elif text.startswith("/minchange"):
-                parts = text.split()
-                if len(parts) == 2:
-                    try:
-                        MIN_CHANGE = float(parts[1])
-                        await send_msg(session, f"✅ 최소 변동률 → <b>{MIN_CHANGE}%</b> 로 변경됨")
-                    except:
-                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /minchange 1.0")
-
-            elif text == "/status":
-                next_str = next_scan_time.strftime("%H:%M:%S") if next_scan_time else "계산중"
-                status = (
-                    f"📊 <b>현재 설정</b> ({now_kst()} KST)\n"
-                    f"롱 사냥 상한: <b>{LS_LOW}</b>\n"
-                    f"숏 사냥 하한: <b>{LS_HIGH}</b>\n"
-                    f"최소 변동률: <b>{MIN_CHANGE}%</b> (절댓값)\n"
-                    f"갱신 주기: <b>{REFRESH_MIN}분</b>\n"
-                    f"현재 롱: <b>{len(prev_long)}개</b>\n"
-                    f"현재 숏: <b>{len(prev_short)}개</b>\n"
-                    f"다음 스캔: <b>{next_str} KST</b>"
-                )
-                await send_msg(session, status)
-
-            elif text == "/scan":
-                force_scan_flag = True
-                await send_msg(session, "🔄 즉시 스캔 시작...")
-
-            elif text == "/list":
-                if not prev_long and not prev_short:
-                    await send_msg(session, f"📭 현재 감지된 종목 없음 ({now_kst()} KST)")
-                else:
-                    lines = [f"📋 <b>현재 감지 목록</b> ({now_kst()} KST)\n"]
-                    if prev_long:
-                        lines.append(f"📈 롱 사냥 {len(prev_long)}개:")
-                        lines.append("  " + ", ".join(s.replace("USDT", "") for s in sorted(prev_long)))
-                    if prev_short:
-                        lines.append(f"📉 숏 사냥 {len(prev_short)}개:")
-                        lines.append("  " + ", ".join(s.replace("USDT", "") for s in sorted(prev_short)))
-                    await send_msg(session, "\n".join(lines))
-
-            elif text == "/help":
-                help_text = (
-                    "📋 <b>사용 가능한 명령어</b>\n\n"
-                    "/low 0.40 — 롱 사냥 L/S 상한 변경\n"
-                    "/high 1.50 — 숏 사냥 L/S 하한 변경\n"
-                    "/minchange 1.0 — 최소 변동률 변경 (상승/하락 모두)\n"
-                    "/scan — 즉시 스캔 실행\n"
-                    "/list — 현재 감지 목록 확인\n"
-                    "/status — 현재 설정 + 다음 스캔 시간\n"
-                    "/help — 도움말"
-                )
-                await send_msg(session, help_text)
-
-    except Exception as e:
-        print(f"[명령어 처리 오류] {e}")
 
 # ── Binance API ────────────────────────────────────────────────────────────
 async def fetch_active_symbols(session):
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as r:
         data = await r.json()
     return set(
         s["symbol"] for s in data["symbols"]
@@ -191,10 +88,11 @@ async def fetch_active_symbols(session):
 
 async def fetch_tickers(session):
     url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as r:
         return await r.json()
 
 async def fetch_ls(session, symbol):
+    """L/S 비율 조회 — 실패 시 None 반환"""
     try:
         url = (
             f"https://fapi.binance.com/futures/data/topLongShortAccountRatio"
@@ -204,23 +102,31 @@ async def fetch_ls(session, symbol):
             data = await r.json()
         if isinstance(data, list) and len(data) > 0:
             return float(data[0]["longShortRatio"])
-    except:
-        pass
-    return None
+        # API가 에러 딕셔너리를 반환하는 경우 (지원 안 하는 심볼 등)
+        return None
+    except Exception:
+        return None
 
 # ── 메인 스캔 ──────────────────────────────────────────────────────────────
 async def scan(session):
     global prev_long, prev_short
 
     now = now_kst()
-    print(f"[{now} KST] 스캔 시작...")
+    print(f"[{now} KST] 스캔 시작")
 
-    active_symbols, tickers = await asyncio.gather(
-        fetch_active_symbols(session),
-        fetch_tickers(session)
-    )
+    # ── STEP 1: 심볼 + 티커 수집 ──────────────────────────────────────────
+    try:
+        active_symbols, tickers = await asyncio.gather(
+            fetch_active_symbols(session),
+            fetch_tickers(session)
+        )
+    except Exception as e:
+        msg = f"⚠️ [스캔 오류] 티커 수집 실패\n{e}\n⏰ {now_kst()} KST"
+        await send_msg(session, msg)
+        print(f"[오류] 티커 수집: {e}")
+        return
 
-    # ★ 변동률 절댓값 기준 — 상승/하락 모두 포함
+    # ── STEP 2: 후보 필터링 ───────────────────────────────────────────────
     candidates = []
     for t in tickers:
         if t["symbol"] not in active_symbols:
@@ -237,21 +143,54 @@ async def scan(session):
 
     candidates.sort(key=lambda x: x["volume"], reverse=True)
     candidates = candidates[:TOP_N]
-    print(f"[{now_kst()} KST] 후보 {len(candidates)}개 → L/S 조회 시작")
 
+    # 후보 수 텔레그램으로 전송 (디버그)
+    await send_msg(session,
+        f"🔍 <b>스캔 진행중</b> ({now_kst()} KST)\n"
+        f"변동률 ≥ {MIN_CHANGE}% 후보: <b>{len(candidates)}개</b>\n"
+        f"L/S 조회 시작..."
+    )
+    print(f"[{now_kst()} KST] 후보 {len(candidates)}개")
+
+    if len(candidates) == 0:
+        await send_msg(session,
+            f"⚠️ 후보 종목 0개\n"
+            f"MIN_CHANGE({MIN_CHANGE}%) 조건을 통과한 종목이 없습니다.\n"
+            f"/minchange 0.5 로 낮춰보세요."
+        )
+        return
+
+    # ── STEP 3: L/S 비율 조회 ─────────────────────────────────────────────
     enriched = []
+    ls_success = 0
+    ls_fail    = 0
     batch = 5
+
     for i in range(0, len(candidates), batch):
         chunk  = candidates[i:i+batch]
         ratios = await asyncio.gather(*[fetch_ls(session, t["symbol"]) for t in chunk])
         for t, ls in zip(chunk, ratios):
             if ls is not None:
                 enriched.append({**t, "ls": ls})
+                ls_success += 1
+            else:
+                ls_fail += 1
         if i + batch < len(candidates):
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.3)
 
-    print(f"[{now_kst()} KST] L/S 수집 완료: {len(enriched)}개")
+    print(f"[{now_kst()} KST] L/S 수집: 성공 {ls_success} / 실패 {ls_fail}")
 
+    # L/S 조회 결과가 전부 실패한 경우
+    if ls_success == 0:
+        await send_msg(session,
+            f"⚠️ <b>L/S 조회 전체 실패</b>\n"
+            f"후보 {len(candidates)}개 중 L/S 데이터 수집 0개\n"
+            f"Binance API 접근 문제일 수 있습니다.\n"
+            f"⏰ {now_kst()} KST"
+        )
+        return
+
+    # ── STEP 4: 조건 분류 ─────────────────────────────────────────────────
     curr_long  = {t["symbol"]: t for t in enriched if t["ls"] <= LS_LOW}
     curr_short = {t["symbol"]: t for t in enriched if t["ls"] >= LS_HIGH}
 
@@ -306,15 +245,111 @@ async def scan(session):
         )
         print(f"[알림] 숏 이탈: {sym}")
 
-    # ── 상태 갱신 + 저장 ──────────────────────────────────────────────────
+    # ── 상태 저장 + 요약 ──────────────────────────────────────────────────
     prev_long  = curr_long_set
     prev_short = curr_short_set
     save_state(prev_long, prev_short)
 
-    # ── 요약 전송 ─────────────────────────────────────────────────────────
     await send_msg(session, build_summary(curr_long, curr_short))
-
     print(f"[{now_kst()} KST] 완료 — 롱 {len(curr_long_set)}개 / 숏 {len(curr_short_set)}개")
+
+# ── 명령어 처리 ────────────────────────────────────────────────────────────
+async def handle_commands(session):
+    global LS_LOW, LS_HIGH, MIN_CHANGE, force_scan_flag
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            data = await r.json()
+
+        updates = data.get("result", [])
+        if not updates:
+            return
+
+        last_update_id = updates[-1]["update_id"]
+        ack_url = f"{url}?offset={last_update_id + 1}"
+        async with session.get(ack_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+            await r.json()
+
+        for update in updates:
+            msg     = update.get("message", {})
+            text    = msg.get("text", "").strip()
+            chat_id = str(msg.get("chat", {}).get("id", ""))
+
+            if chat_id != CHAT_ID:
+                continue
+
+            if text.startswith("/low"):
+                parts = text.split()
+                if len(parts) == 2:
+                    try:
+                        LS_LOW = float(parts[1])
+                        await send_msg(session, f"✅ 롱 사냥 상한 → <b>{LS_LOW}</b> 로 변경됨")
+                    except:
+                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /low 0.40")
+
+            elif text.startswith("/high"):
+                parts = text.split()
+                if len(parts) == 2:
+                    try:
+                        LS_HIGH = float(parts[1])
+                        await send_msg(session, f"✅ 숏 사냥 하한 → <b>{LS_HIGH}</b> 로 변경됨")
+                    except:
+                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /high 1.50")
+
+            elif text.startswith("/minchange"):
+                parts = text.split()
+                if len(parts) == 2:
+                    try:
+                        MIN_CHANGE = float(parts[1])
+                        await send_msg(session, f"✅ 최소 변동률 → <b>{MIN_CHANGE}%</b> 로 변경됨")
+                    except:
+                        await send_msg(session, "❌ 숫자를 입력해주세요. 예: /minchange 1.0")
+
+            elif text == "/status":
+                next_str = next_scan_time.strftime("%H:%M:%S") if next_scan_time else "계산중"
+                await send_msg(session,
+                    f"📊 <b>현재 설정</b> ({now_kst()} KST)\n"
+                    f"롱 사냥 상한: <b>{LS_LOW}</b>\n"
+                    f"숏 사냥 하한: <b>{LS_HIGH}</b>\n"
+                    f"최소 변동률: <b>{MIN_CHANGE}%</b>\n"
+                    f"갱신 주기: <b>{REFRESH_MIN}분</b>\n"
+                    f"현재 롱: <b>{len(prev_long)}개</b>\n"
+                    f"현재 숏: <b>{len(prev_short)}개</b>\n"
+                    f"다음 스캔: <b>{next_str} KST</b>"
+                )
+
+            elif text == "/scan":
+                force_scan_flag = True
+                await send_msg(session, "🔄 즉시 스캔 시작...")
+
+            elif text == "/list":
+                if not prev_long and not prev_short:
+                    await send_msg(session, f"📭 현재 감지된 종목 없음 ({now_kst()} KST)")
+                else:
+                    lines = [f"📋 <b>현재 감지 목록</b> ({now_kst()} KST)\n"]
+                    if prev_long:
+                        lines.append(f"📈 롱 사냥 {len(prev_long)}개:")
+                        lines.append("  " + ", ".join(s.replace("USDT","") for s in sorted(prev_long)))
+                    if prev_short:
+                        lines.append(f"📉 숏 사냥 {len(prev_short)}개:")
+                        lines.append("  " + ", ".join(s.replace("USDT","") for s in sorted(prev_short)))
+                    await send_msg(session, "\n".join(lines))
+
+            elif text == "/help":
+                await send_msg(session,
+                    "📋 <b>사용 가능한 명령어</b>\n\n"
+                    "/low 0.40 — 롱 사냥 L/S 상한 변경\n"
+                    "/high 1.50 — 숏 사냥 L/S 하한 변경\n"
+                    "/minchange 1.0 — 최소 변동률 변경\n"
+                    "/scan — 즉시 스캔 실행\n"
+                    "/list — 현재 감지 목록 확인\n"
+                    "/status — 현재 설정 + 다음 스캔 시간\n"
+                    "/help — 도움말"
+                )
+
+    except Exception as e:
+        print(f"[명령어 처리 오류] {e}")
 
 # ── 루프 ──────────────────────────────────────────────────────────────────
 async def command_loop(session):
@@ -331,13 +366,17 @@ async def scan_loop(session):
         try:
             await scan(session)
         except Exception as e:
+            err_msg = f"⚠️ <b>스캔 루프 오류</b>\n{e}\n⏰ {now_kst()} KST"
             print(f"[스캔 루프 오류] {e}")
+            try:
+                await send_msg(session, err_msg)
+            except:
+                pass
 
-        # 다음 스캔 예정 시각 계산 (KST)
         next_scan_time = datetime.now(KST) + timedelta(minutes=REFRESH_MIN)
         print(f"[다음 스캔] {next_scan_time.strftime('%H:%M:%S')} KST")
 
-        for _ in range(REFRESH_MIN * 30):  # 2초 × 30 = 1분
+        for _ in range(REFRESH_MIN * 30):
             await asyncio.sleep(2)
             if force_scan_flag:
                 force_scan_flag = False
@@ -352,9 +391,9 @@ async def main():
             "🚀 <b>Long Hunter Bot 시작!</b>\n"
             f"롱 사냥: L/S ≤ {LS_LOW}\n"
             f"숏 사냥: L/S ≥ {LS_HIGH}\n"
-            f"최소 변동률: {MIN_CHANGE}% (상승/하락 모두)\n"
+            f"최소 변동률: {MIN_CHANGE}%\n"
             f"갱신: {REFRESH_MIN}분마다\n"
-            f"시작 시각: {now_kst('%Y-%m-%d %H:%M:%S')} KST\n\n"
+            f"시작: {now_kst('%Y-%m-%d %H:%M:%S')} KST\n\n"
             "명령어 보려면 /help"
         )
         await asyncio.gather(
